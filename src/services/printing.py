@@ -94,13 +94,22 @@ def valid_pages(pages: str) -> bool:
     return True
 
 
+SCALE_FIT = "fit"
+SCALE_STRETCH = "stretch"
+SCALE_MODES = (SCALE_FIT, SCALE_STRETCH)
+
 A4_300DPI = (2480, 3508)
 A4_POINTS = (595, 842)
-MARGIN = 118
+MARGIN_FIT = 118
+MARGIN_STRETCH = 59
 MAX_IMAGE_PAGES = 50
 
 
-def _fit_a4(frame: Image.Image) -> Image.Image:
+def is_image(filename: str) -> bool:
+    return Path(filename).suffix.lower() in IMAGE_EXT
+
+
+def _place_on_a4(frame: Image.Image, scale: str) -> Image.Image:
     img = ImageOps.exif_transpose(frame)
     if img.mode in ("RGBA", "LA", "P"):
         bg = Image.new("RGB", img.size, "white")
@@ -112,7 +121,13 @@ def _fit_a4(frame: Image.Image) -> Image.Image:
     if img.width > img.height:
         page_w, page_h = page_h, page_w
 
-    img.thumbnail((page_w - 2 * MARGIN, page_h - 2 * MARGIN))
+    if scale == SCALE_STRETCH:
+        box = (page_w - 2 * MARGIN_STRETCH, page_h - 2 * MARGIN_STRETCH)
+        img = img.resize(box, Image.Resampling.LANCZOS)
+    else:
+        box = (page_w - 2 * MARGIN_FIT, page_h - 2 * MARGIN_FIT)
+        img = ImageOps.contain(img, box, Image.Resampling.LANCZOS)
+
     page = Image.new(img.mode, (page_w, page_h), "white")
     page.paste(img, ((page_w - img.width) // 2, (page_h - img.height) // 2))
     return page
@@ -159,7 +174,7 @@ class Printer:
         return sum(1 for line in out.splitlines() if line.strip())
 
 
-    async def to_pdf(self, src: Path) -> Path:
+    async def to_pdf(self, src: Path, scale: str = SCALE_FIT) -> Path:
         ext = src.suffix.lower()
         if ext in PDF_EXT:
             return src
@@ -168,7 +183,7 @@ class Printer:
         dst.unlink(missing_ok=True)
 
         if ext in IMAGE_EXT:
-            await asyncio.to_thread(self._image_to_pdf, src, dst)
+            await asyncio.to_thread(self._image_to_pdf, src, dst, scale)
         elif ext in OFFICE_EXT:
             await self._soffice(src)
         elif ext in TEXT_EXT:
@@ -231,7 +246,7 @@ class Printer:
             tmp.unlink(missing_ok=True)
 
     @staticmethod
-    def _image_to_pdf(src: Path, dst: Path) -> None:
+    def _image_to_pdf(src: Path, dst: Path, scale: str = SCALE_FIT) -> None:
         try:
             opened = Image.open(src)
         except (UnidentifiedImageError, OSError) as e:
@@ -240,12 +255,12 @@ class Printer:
         with opened:
             if src.suffix.lower() in MULTIPAGE_IMAGE_EXT:
                 pages = [
-                    _fit_a4(frame)
+                    _place_on_a4(frame, scale)
                     for i, frame in enumerate(ImageSequence.Iterator(opened))
                     if i < MAX_IMAGE_PAGES
                 ]
             else:
-                pages = [_fit_a4(opened)]
+                pages = [_place_on_a4(opened, scale)]
 
         first, *rest = pages
         first.save(dst, "PDF", save_all=True, append_images=rest, resolution=300)
@@ -288,7 +303,12 @@ class Printer:
         await run("cancel", cups_job_id)
 
     async def print_file(
-        self, src: Path, copies: int = 1, duplex: bool = False, pages: str | None = None
+        self,
+        src: Path,
+        copies: int = 1,
+        duplex: bool = False,
+        pages: str | None = None,
+        scale: str = SCALE_FIT,
     ) -> None:
         if not src.exists():
             raise DeviceError("Файл для печати не найден на сервере")
@@ -296,7 +316,7 @@ class Printer:
         if not ready:
             raise DeviceError(f"Принтер {desc}")
 
-        pdf = await self.to_pdf(src)
+        pdf = await self.to_pdf(src, scale)
         job = await self.print_pdf(pdf, copies=copies, duplex=duplex, pages=pages)
         try:
             await self.wait_done(job)

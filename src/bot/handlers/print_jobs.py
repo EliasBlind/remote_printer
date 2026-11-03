@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Document, Message, PhotoSize, User
 
 from ...services.config import Config
 from ...services.db import DB
-from ...services.printing import Printer, valid_pages
+from ...services.printing import SCALE_MODES, Printer, is_image, valid_pages
 from .. import texts, views
 from ..keyboards import PrintCb, ReprintCb
 from ..states import PrintStates
@@ -105,7 +105,8 @@ async def on_print_action(
         await callback.answer()
         return
 
-    if action in {"inc", "dec", "duplex", "pages", "pages_all", "go"} and status != "draft":
+    editable = {"inc", "dec", "duplex", "pages", "pages_all", "go"} | {f"scale_{m}" for m in SCALE_MODES}
+    if action in editable and status != "draft":
         await callback.answer(texts.JOB_LOCKED, show_alert=True)
         return
 
@@ -121,6 +122,15 @@ async def on_print_action(
         await db.update_job(jid, copies=job["copies"] - 1)
     elif action == "duplex":
         await db.update_job(jid, duplex=int(not job["duplex"]))
+    elif action.startswith("scale_"):
+        scale = action.removeprefix("scale_")
+        if scale not in SCALE_MODES or not is_image(job["original_name"] or ""):
+            await callback.answer()
+            return
+        if scale == job["scale"]:
+            await callback.answer()
+            return
+        await db.update_job(jid, scale=scale)
     elif action == "pages_all":
         await db.update_job(jid, pages=None)
     elif action == "pages":

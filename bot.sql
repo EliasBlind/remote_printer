@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     copies         INTEGER NOT NULL DEFAULT 1,
     duplex         INTEGER NOT NULL DEFAULT 0,
     pages          TEXT,
+    scale          TEXT NOT NULL DEFAULT 'fit' CHECK (scale IN ('fit', 'stretch')),
     status         TEXT NOT NULL DEFAULT 'draft'
                    CHECK (status IN ('draft', 'queued', 'processing', 'done', 'error', 'cancelled')),
     error          TEXT,

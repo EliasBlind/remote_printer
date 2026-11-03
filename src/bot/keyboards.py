@@ -9,6 +9,7 @@ from aiogram.types import (
 )
 
 from ..services.db import Row
+from ..services.printing import SCALE_FIT, SCALE_STRETCH, is_image
 from . import texts
 
 SELECTED = "✓ "
@@ -86,6 +87,12 @@ def print_kb(job: Row, duplex_supported: bool) -> InlineKeyboardMarkup | None:
         rows.append([_btn("Изменить страницы", cb("pages")), _btn("Все страницы", cb("pages_all"))])
     else:
         rows.append([_btn("Выбрать страницы", cb("pages"))])
+    if is_image(job["original_name"] or ""):
+        fit = job["scale"] != SCALE_STRETCH
+        rows.append([
+            _btn((SELECTED if fit else "") + "Вписать", cb(f"scale_{SCALE_FIT}")),
+            _btn(("" if fit else SELECTED) + "Растянуть", cb(f"scale_{SCALE_STRETCH}")),
+        ])
     if duplex_supported:
         state = "вкл" if job["duplex"] else "выкл"
         rows.append([_btn(f"С двух сторон: {state}", cb("duplex"))])

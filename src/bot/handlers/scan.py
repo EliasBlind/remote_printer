@@ -1,9 +1,11 @@
 import asyncio
+import logging
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, InputMediaDocument, Message, User
@@ -17,6 +19,7 @@ from ..keyboards import ScanCb
 from ..states import ScanStates
 from ..utils import callback_message, edit_message
 
+log = logging.getLogger(__name__)
 router = Router(name="scan")
 
 
@@ -110,26 +113,45 @@ async def scan_finish(
     await state.clear()
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
 
-    if callback_data.action == "pdf":
-        name = f"scan_{stamp}.pdf"
-        dst = cfg.scans / f"{uuid4().hex}.pdf"
-        await asyncio.to_thread(Scanner.pages_to_pdf, pages, dst, data["dpi"])
-        job_id = await db.create_job(event_from_user.id, "scan", name, file_path=str(dst), status="done")
-        await msg.answer_document(
-            FSInputFile(dst, filename=name),
-            caption=texts.scan_ready(len(pages)),
-            reply_markup=keyboards.reprint_kb(job_id),
-        )
-    else:
-        for i in range(0, len(pages), 10):
-            await msg.answer_media_group([
-                InputMediaDocument(media=FSInputFile(p, filename=f"scan_{stamp}_{n}.jpg"))
-                for n, p in enumerate(pages[i : i + 10], i + 1)
-            ])
-        await db.create_job(event_from_user.id, "scan", f"{len(pages)} × JPG", status="done")
-        await msg.answer(texts.scan_ready(len(pages)))
+    try:
+        if callback_data.action == "pdf":
+            await _send_pdf(msg, pages, data["dpi"], stamp, event_from_user.id, db, cfg)
+        else:
+            await _send_jpgs(msg, pages, stamp)
+            await db.create_job(event_from_user.id, "scan", f"{len(pages)} × JPG", status="done")
+            await msg.answer(texts.scan_ready(len(pages)))
+    except (TelegramAPIError, OSError) as e:
+        log.exception("Не удалось отправить скан")
+        await msg.answer(texts.scan_send_failed(str(e)))
+    finally:
+        Scanner.cleanup(pages)
 
-    Scanner.cleanup(pages)
+
+async def _send_pdf(
+    msg: Message, pages: list[Path], dpi: int, stamp: str, user_id: int, db: DB, cfg: Config
+) -> None:
+    name = f"scan_{stamp}.pdf"
+    dst = cfg.scans / f"{uuid4().hex}.pdf"
+    await asyncio.to_thread(Scanner.pages_to_pdf, pages, dst, dpi)
+    job_id = await db.create_job(user_id, "scan", name, file_path=str(dst), status="done")
+    await msg.answer_document(
+        FSInputFile(dst, filename=name),
+        caption=texts.scan_ready(len(pages)),
+        reply_markup=keyboards.reprint_kb(job_id),
+    )
+
+
+async def _send_jpgs(msg: Message, pages: list[Path], stamp: str) -> None:
+    files = [
+        FSInputFile(p, filename=f"scan_{stamp}_{n}.jpg" if len(pages) > 1 else f"scan_{stamp}.jpg")
+        for n, p in enumerate(pages, 1)
+    ]
+    for i in range(0, len(files), 10):
+        chunk = files[i : i + 10]
+        if len(chunk) == 1:
+            await msg.answer_document(chunk[0])
+        else:
+            await msg.answer_media_group([InputMediaDocument(media=f) for f in chunk])
 
 
 @router.callback_query(ScanStates.session, ScanCb.filter(F.action == "cancel"))

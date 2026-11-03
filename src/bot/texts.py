@@ -5,7 +5,7 @@ from html import escape
 from aiogram.types import User
 
 from ..services.db import Row
-from ..services.printing import FORMAT_GROUPS, format_label
+from ..services.printing import FORMAT_GROUPS, SCALE_STRETCH, format_label, is_image
 
 BTN_PRINT = "Печать"
 BTN_SCAN = "Сканировать"
@@ -151,6 +151,10 @@ STATUS_SHORT = {
     "cancelled": "отменено",
 }
 KIND_TEXT = {"print": "печать", "scan": "скан"}
+SCALE_TEXT = {
+    "fit": "по размеру листа, с сохранением пропорций",
+    "stretch": "на весь лист по вертикали и горизонтали",
+}
 
 TOO_BIG = (
     "<b>Файл больше 20 МБ</b>\n\n"
@@ -195,6 +199,10 @@ def print_card(job: Row, duplex_supported: bool) -> str:
         f"<b>Копий:</b> {job['copies']}",
         f"<b>Страницы:</b> {escape(job['pages']) if job['pages'] else 'все'}",
     ]
+    if is_image(name):
+        lines.append(f"<b>Масштаб:</b> {SCALE_TEXT.get(job['scale'], job['scale'])}")
+        if job["scale"] == SCALE_STRETCH:
+            lines.append("<i>Пропорции изображения могут исказиться.</i>")
     if duplex_supported:
         lines.append(f"<b>С двух сторон:</b> {'да' if job['duplex'] else 'нет'}")
     lines += ["", f"<b>Статус:</b> {STATUS_TEXT.get(job['status'], job['status'])}"]
@@ -263,6 +271,10 @@ def scan_page_done(n: int) -> str:
 
 def scan_error(err: str) -> str:
     return f"<b>Не удалось отсканировать</b>\n<blockquote>{escape(trim(err, 300))}</blockquote>"
+
+
+def scan_send_failed(err: str) -> str:
+    return f"<b>Не удалось отправить скан</b>\n<blockquote>{escape(trim(err, 300))}</blockquote>"
 
 
 def scan_ready(n: int) -> str:

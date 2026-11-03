@@ -6,7 +6,7 @@ from .config import Config
 
 Row = aiosqlite.Row
 
-JOB_FIELDS = {"file_path", "copies", "duplex", "pages", "status", "error", "message_id"}
+JOB_FIELDS = {"file_path", "copies", "duplex", "pages", "scale", "status", "error", "message_id"}
 
 
 class DB:
@@ -27,7 +27,14 @@ class DB:
         await self.conn.execute("PRAGMA journal_mode=WAL;")
         await self.conn.execute("PRAGMA foreign_keys=ON;")
         await self.conn.executescript(self.schema.read_text(encoding="utf-8"))
+        await self._migrate()
         await self.conn.commit()
+
+    async def _migrate(self) -> None:
+        async with self.db.execute("PRAGMA table_info(jobs)") as cur:
+            columns = {row["name"] for row in await cur.fetchall()}
+        if "scale" not in columns:
+            await self.db.execute("ALTER TABLE jobs ADD COLUMN scale TEXT NOT NULL DEFAULT 'fit'")
 
     async def close(self) -> None:
         if self.conn is not None:

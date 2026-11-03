@@ -61,6 +61,7 @@ class PrintWorker:
                 copies=job["copies"],
                 duplex=bool(job["duplex"]),
                 pages=job["pages"],
+                scale=job["scale"],
             )
         except DeviceError as e:
             await self.db.set_status(job_id, "error", str(e))
