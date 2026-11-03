@@ -15,3 +15,5 @@ timeout = 300
 
 [scanner]
 device = ''
+width_mm = 210
+height_mm = 297

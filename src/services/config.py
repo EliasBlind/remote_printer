@@ -35,6 +35,8 @@ class Config:
 
         scanner = raw.get("scanner", {})
         self.scanner_device: str | None = scanner.get("device") or None
+        self.scan_width_mm: float = float(scanner.get("width_mm", 210))
+        self.scan_height_mm: float = float(scanner.get("height_mm", 297))
 
         for folder in (self.converted, self.scans, self.upload, self.data_base.parent):
             folder.mkdir(parents=True, exist_ok=True)
