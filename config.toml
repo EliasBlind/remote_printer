@@ -1,0 +1,17 @@
+[paths]
+converted = 'data/converted'
+scans = 'data/scans'
+upload = 'data/uploads'
+
+[files]
+data_base = 'data/bot.db'
+data_schema = 'bot.sql'
+
+[printer]
+name = 'HP_LaserJet_Professional_M1132_MFP'
+max_copies = 20
+duplex = false
+timeout = 300
+
+[scanner]
+device = ''

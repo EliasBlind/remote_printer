@@ -1,0 +1,148 @@
+import asyncio
+from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
+
+from aiogram import F, Router
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, FSInputFile, InputMediaDocument, Message, User
+
+from ...services.config import Config
+from ...services.db import DB
+from ...services.scanning import Scanner
+from ...services.shell import DeviceError
+from .. import keyboards, texts, views
+from ..keyboards import ScanCb
+from ..states import ScanStates
+from ..utils import callback_message, edit_message
+
+router = Router(name="scan")
+
+
+@router.message(Command("scan"))
+@router.message(F.text == texts.BTN_SCAN)
+async def scan_menu(message: Message, state: FSMContext, scanner: Scanner) -> None:
+    old = await state.get_data()
+    Scanner.cleanup(old.get("pages", []))
+
+    if scanner.busy:
+        await message.answer(texts.SCAN_BUSY)
+        return
+
+    data = {"mode": views.DEFAULT_SCAN_MODE, "dpi": 300, "pages": []}
+    await state.set_state(ScanStates.session)
+    await state.set_data(data)
+    text, kb = views.scan_settings(data)
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(ScanStates.session, ScanCb.filter(F.action.in_({"mode", "dpi"})))
+async def scan_settings(callback: CallbackQuery, callback_data: ScanCb, state: FSMContext) -> None:
+    if callback_data.action == "mode" and callback_data.value in views.SCAN_MODES:
+        data = await state.update_data(mode=callback_data.value)
+    elif callback_data.action == "dpi" and callback_data.value.isdigit() and int(callback_data.value) in views.SCAN_DPIS:
+        data = await state.update_data(dpi=int(callback_data.value))
+    else:
+        await callback.answer()
+        return
+
+    msg = callback_message(callback)
+    if msg is not None:
+        text, kb = views.scan_settings(data)
+        await edit_message(msg, text, kb)
+    await callback.answer()
+
+
+@router.callback_query(ScanStates.session, ScanCb.filter(F.action == "scan"))
+async def do_scan(callback: CallbackQuery, state: FSMContext, scanner: Scanner) -> None:
+    msg = callback_message(callback)
+    if msg is None:
+        await callback.answer()
+        return
+    if scanner.busy:
+        await callback.answer(texts.SCAN_BUSY, show_alert=True)
+        return
+    await callback.answer()
+
+    data = await state.get_data()
+    n = len(data["pages"]) + 1
+
+    if msg.photo:
+        await msg.edit_reply_markup(reply_markup=None)
+        status = await msg.answer(texts.scanning(n))
+    else:
+        await edit_message(msg, texts.scanning(n))
+        status = msg
+
+    try:
+        mode = data["mode"] if data["mode"] in views.SCAN_MODES else views.DEFAULT_SCAN_MODE
+        page = await scanner.scan_page(views.SCAN_MODES[mode][0], data["dpi"])
+        preview = await scanner.make_preview(page)
+    except DeviceError as e:
+        await edit_message(status, texts.scan_error(str(e)), keyboards.scan_retry_kb())
+        return
+
+    pages = [*data["pages"], str(page)]
+    await state.update_data(pages=pages)
+    await status.delete()
+    await status.answer_photo(
+        FSInputFile(preview),
+        caption=texts.scan_page_done(len(pages)),
+        reply_markup=keyboards.scan_session_kb(),
+    )
+
+
+@router.callback_query(ScanStates.session, ScanCb.filter(F.action.in_({"pdf", "jpg"})))
+async def scan_finish(
+    callback: CallbackQuery, callback_data: ScanCb, event_from_user: User,
+    state: FSMContext, db: DB, cfg: Config,
+) -> None:
+    msg = callback_message(callback)
+    data = await state.get_data()
+    pages = [Path(p) for p in data.get("pages", [])]
+    if msg is None or not pages:
+        await callback.answer(texts.SCAN_NO_PAGES, show_alert=True)
+        return
+
+    await callback.answer(texts.SCAN_ASSEMBLING)
+    await msg.edit_reply_markup(reply_markup=None)
+    await state.clear()
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+    if callback_data.action == "pdf":
+        name = f"scan_{stamp}.pdf"
+        dst = cfg.scans / f"{uuid4().hex}.pdf"
+        await asyncio.to_thread(Scanner.pages_to_pdf, pages, dst, data["dpi"])
+        job_id = await db.create_job(event_from_user.id, "scan", name, file_path=str(dst), status="done")
+        await msg.answer_document(
+            FSInputFile(dst, filename=name),
+            caption=texts.scan_ready(len(pages)),
+            reply_markup=keyboards.reprint_kb(job_id),
+        )
+    else:
+        for i in range(0, len(pages), 10):
+            await msg.answer_media_group([
+                InputMediaDocument(media=FSInputFile(p, filename=f"scan_{stamp}_{n}.jpg"))
+                for n, p in enumerate(pages[i : i + 10], i + 1)
+            ])
+        await db.create_job(event_from_user.id, "scan", f"{len(pages)} × JPG", status="done")
+        await msg.answer(texts.scan_ready(len(pages)))
+
+    Scanner.cleanup(pages)
+
+
+@router.callback_query(ScanStates.session, ScanCb.filter(F.action == "cancel"))
+async def scan_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    Scanner.cleanup(data.get("pages", []))
+    await state.clear()
+    msg = callback_message(callback)
+    if msg is not None:
+        await edit_message(msg, texts.SCAN_CANCELLED)
+    await callback.answer()
+
+
+@router.callback_query(ScanCb.filter())
+async def scan_expired(callback: CallbackQuery) -> None:
+    await callback.answer(texts.SCAN_EXPIRED, show_alert=True)
