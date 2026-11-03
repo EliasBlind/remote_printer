@@ -4,7 +4,7 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from .config import Config
 from .shell import DeviceError, run
@@ -32,9 +32,27 @@ class Scanner:
         if not data:
             raise DeviceError("Сканер вернул пустой результат")
 
-        dst = self.out_dir / f"{uuid4().hex}.jpg"
-        await asyncio.to_thread(self._save_jpeg, data, dst, dpi)
+        name = uuid4().hex
+        raw = self.out_dir / f"{name}.png"
+        dst = self.out_dir / f"{name}.jpg"
+        try:
+            raw.write_bytes(data)
+        except OSError as e:
+            raise DeviceError(f"Не удалось сохранить скан в {self.out_dir}: {e.strerror}") from e
+
+        try:
+            await asyncio.to_thread(self._save_jpeg, data, dst, dpi)
+        except (UnidentifiedImageError, OSError) as e:
+            raise DeviceError(
+                f"Сканер вернул данные, которые не читаются как изображение ({len(data)} байт). "
+                f"Они сохранены в {raw}"
+            ) from e
+        raw.unlink(missing_ok=True)
         return dst
+
+    async def devices(self) -> str:
+        out = await run("scanimage", "-L", timeout=60)
+        return out.decode(errors="replace").strip()
 
     @staticmethod
     def _save_jpeg(png: bytes, dst: Path, dpi: int) -> None:

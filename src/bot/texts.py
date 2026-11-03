@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Any
 from datetime import datetime, timezone
 from html import escape
 
@@ -287,3 +288,22 @@ def scan_ready(n: int) -> str:
 CANCELLED = "Действие отменено."
 FALLBACK = "Пришлите файл или фото для печати либо выберите действие в меню."
 FALLBACK_MEDIA = "Такие сообщения я не печатаю. Пришлите документ или фото."
+
+
+DIAG_RUNNING = "<i>Проверяю систему, это может занять до минуты…</i>"
+
+
+def diag_report(checks: Sequence[Any]) -> str:
+    lines = ["<b>Диагностика</b>"]
+    for c in checks:
+        mark = "OK" if c.ok else "ОШИБКА"
+        lines.append(f"\n<b>{escape(c.title)}</b> — <code>{mark}</code>\n<pre>{escape(trim(c.detail, 600))}</pre>")
+    return "\n".join(lines)
+
+
+def internal_error(exc: BaseException) -> str:
+    return (
+        "<b>Внутренняя ошибка</b>\n"
+        f"<blockquote>{escape(trim(f'{type(exc).__name__}: {exc}', 300))}</blockquote>\n"
+        "<i>Подробности записаны в лог бота.</i>"
+    )

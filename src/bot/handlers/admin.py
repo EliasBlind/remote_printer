@@ -4,7 +4,10 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from ...services.config import Config
+from ...services import diagnostics
 from ...services.db import DB
+from ...services.printing import Printer
+from ...services.scanning import Scanner
 from .. import texts, views
 from ..filters import IsRoot
 from ..keyboards import AccessCb, UsersCb, main_menu
@@ -73,3 +76,11 @@ async def allow_deny(message: Message, command: CommandObject, db: DB, bot: Bot)
     await db.set_allowed(int(arg), allowed)
     await message.answer(texts.allow_result(allowed, arg))
     await _notify(bot, int(arg), allowed)
+
+
+@router.message(Command("diag"))
+async def diag(message: Message, command: CommandObject, cfg: Config, printer: Printer, scanner: Scanner) -> None:
+    await message.answer(texts.DIAG_RUNNING)
+    test_scan = (command.args or "").strip() != "noscan"
+    checks = await diagnostics.collect(cfg, printer, scanner, test_scan)
+    await message.answer(texts.diag_report(checks))

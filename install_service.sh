@@ -52,6 +52,11 @@ install() {
     as_user "$PROJECT_DIR/.venv/bin/pip" install --quiet --upgrade pip
     as_user "$PROJECT_DIR/.venv/bin/pip" install --quiet -r "$PROJECT_DIR/requirements.txt"
 
+    if [[ -d "$PROJECT_DIR/data" ]]; then
+        info "Назначаю $RUN_USER владельцем папки data"
+        sudo chown -R "$RUN_USER": "$PROJECT_DIR/data"
+    fi
+
     for group in lp scanner; do
         if getent group "$group" >/dev/null && ! id -nG "$RUN_USER" | grep -qw "$group"; then
             info "Добавляю $RUN_USER в группу $group (доступ к принтеру и сканеру)"

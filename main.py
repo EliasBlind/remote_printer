@@ -6,7 +6,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BotCommand, BotCommandScopeChat
 
 from src.bot.handlers import setup_routers
 from src.bot.worker import PrintWorker
@@ -25,6 +26,12 @@ COMMANDS = [
     BotCommand(command="formats", description="Какие файлы можно печатать"),
     BotCommand(command="help", description="Помощь"),
     BotCommand(command="cancel", description="Отменить действие"),
+]
+
+ROOT_COMMANDS = [
+    *COMMANDS,
+    BotCommand(command="users", description="Пользователи и доступ"),
+    BotCommand(command="diag", description="Диагностика принтера и сканера"),
 ]
 
 
@@ -50,6 +57,10 @@ async def main() -> None:
     dp.include_router(setup_routers())
 
     await bot.set_my_commands(COMMANDS)
+    try:
+        await bot.set_my_commands(ROOT_COMMANDS, scope=BotCommandScopeChat(chat_id=cfg.root_id))
+    except TelegramAPIError:
+        pass
     await worker.restore()
     worker_task = asyncio.create_task(worker.run())
 

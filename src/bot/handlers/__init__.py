@@ -1,11 +1,12 @@
 from aiogram import Router
 
 from ..middlewares import AccessMiddleware
-from . import admin, common, fallback, print_jobs, scan, start
+from . import admin, common, errors, fallback, print_jobs, scan, start
 
 
 def setup_routers() -> Router:
     root = Router(name="root")
+    root.include_router(errors.router)
 
     root.include_router(start.router)
     root.include_router(admin.router)

@@ -85,15 +85,23 @@ async def do_scan(callback: CallbackQuery, state: FSMContext, scanner: Scanner) 
     except DeviceError as e:
         await edit_message(status, texts.scan_error(str(e)), keyboards.scan_retry_kb())
         return
+    except Exception as e:
+        log.exception("Сбой сканирования")
+        await edit_message(status, texts.scan_error(f"{type(e).__name__}: {e}"), keyboards.scan_retry_kb())
+        return
 
     pages = [*data["pages"], str(page)]
     await state.update_data(pages=pages)
-    await status.delete()
-    await status.answer_photo(
-        FSInputFile(preview),
-        caption=texts.scan_page_done(len(pages)),
-        reply_markup=keyboards.scan_session_kb(),
-    )
+    caption = texts.scan_page_done(len(pages))
+    try:
+        await status.answer_photo(FSInputFile(preview), caption=caption, reply_markup=keyboards.scan_session_kb())
+    except TelegramAPIError:
+        log.exception("Не удалось отправить превью, отправляю файлом")
+        await status.answer_document(FSInputFile(page), caption=caption, reply_markup=keyboards.scan_session_kb())
+    try:
+        await status.delete()
+    except TelegramAPIError:
+        pass
 
 
 @router.callback_query(ScanStates.session, ScanCb.filter(F.action.in_({"pdf", "jpg"})))
@@ -120,7 +128,7 @@ async def scan_finish(
             await _send_jpgs(msg, pages, stamp)
             await db.create_job(event_from_user.id, "scan", f"{len(pages)} × JPG", status="done")
             await msg.answer(texts.scan_ready(len(pages)))
-    except (TelegramAPIError, OSError) as e:
+    except Exception as e:
         log.exception("Не удалось отправить скан")
         await msg.answer(texts.scan_send_failed(str(e)))
     finally:
